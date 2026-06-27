@@ -9,6 +9,10 @@ import webbrowser
 import http.server
 import socketserver
 from threading import Timer
+import asyncio
+import websockets
+import threading
+from urllib.parse import urlparse, parse_qs
 
 
 def load_dotenv():
@@ -946,6 +950,51 @@ def clean_up_subprocesses():
                 pass
 
 
+async def telemetry_ws_handler(websocket):
+    api_key = os.environ.get("EDGE_TELEMETRY_API_KEY")
+    if not api_key:
+        await websocket.close(
+            code=1011,
+            reason="Server is not configured to accept telemetry (missing API key).",
+        )
+        return
+
+    path = getattr(websocket, "path", None) or getattr(websocket.request, "path", "")
+    query = parse_qs(urlparse(path).query)
+    client_token = query.get("token", [""])[0]
+
+    if client_token != api_key:
+        await websocket.close(code=4001, reason="Unauthorized edge node.")
+        return
+
+    try:
+        async for message in websocket:
+            import json
+
+            try:
+                data = json.loads(message)
+                await websocket.send(json.dumps({"status": "received", "data": data}))
+            except json.JSONDecodeError:
+                pass
+    except websockets.exceptions.ConnectionClosed:
+        pass
+    except Exception as e:
+        print(f"WS error: {e}")
+
+
+def start_ws_server():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    ws_port = PORT + 100
+    try:
+        start_server = websockets.serve(telemetry_ws_handler, "localhost", ws_port)
+        loop.run_until_complete(start_server)
+        print(f"[*] Started Telemetry WebSocket Server on ws://localhost:{ws_port}")
+        loop.run_forever()
+    except Exception as e:
+        print(f"[-] Failed to start WS server: {e}")
+
+
 def main():
     global PORT
     load_projects_mapping()
@@ -992,6 +1041,7 @@ def main():
 
         # Open browser after 1 second
         Timer(1.0, open_browser).start()
+        threading.Thread(target=start_ws_server, daemon=True).start()
 
         try:
             httpd.serve_forever()

@@ -1139,5 +1139,55 @@ document.addEventListener('DOMContentLoaded', () => {
     // 9. Boot Init
     buildRoster();
     loadProjects();
+
+    // WebSocket Telemetry Connection
+    let wsConnection = null;
+    let wsReconnectTimeout = null;
+
+    function connectWebSocket() {
+        if (wsConnection) return;
+
+        // Use a dummy token or fetch from config in a real app
+        const token = "secret-key-123";
+        const wsPort = parseInt(window.location.port) + 100;
+
+        try {
+            wsConnection = new WebSocket(`ws://${window.location.hostname}:${wsPort}/ws/telemetry?token=${token}`);
+
+            wsConnection.onopen = () => {
+                console.log("[WebSocket] Connected to Telemetry Channel");
+                if (wsReconnectTimeout) {
+                    clearTimeout(wsReconnectTimeout);
+                    wsReconnectTimeout = null;
+                }
+            };
+
+            wsConnection.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log("[WebSocket Telemetry]:", data);
+                } catch (e) {}
+            };
+
+            wsConnection.onclose = (event) => {
+                console.log("[WebSocket] Disconnected. Reconnecting in 5s...");
+                wsConnection = null;
+                wsReconnectTimeout = setTimeout(connectWebSocket, 5000);
+            };
+
+            wsConnection.onerror = (err) => {
+                console.error("[WebSocket] Error:", err);
+                if (wsConnection) {
+                    wsConnection.close();
+                }
+            };
+        } catch(e) {
+            console.error("Failed to setup WebSocket", e);
+        }
+    }
+
+    // Call on load
+    setTimeout(connectWebSocket, 2000);
+
     startDiscordPolling();
 });
